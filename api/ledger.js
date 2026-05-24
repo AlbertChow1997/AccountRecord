@@ -1,12 +1,14 @@
 import { get, put } from "@vercel/blob";
 import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const USERS = ["T", "A", "C"];
 const SPLITS = ["all", "ta"];
 const BLOB_STORE_NAME = "AccountRecords";
 const BLOB_PATH = `${BLOB_STORE_NAME}/transactions.json`;
 const BLOB_ACCESS = process.env.BLOB_ACCESS || "private";
-const LOCAL_STORE = "/tmp/account-record-transactions.json";
+const LOCAL_STORE = join(tmpdir(), "account-record-transactions.json");
 
 function blobToken() {
   return process.env.ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN || "";
@@ -50,6 +52,7 @@ function normalizeTransaction(tx) {
   const date = tx?.date;
   const id = String(tx?.id || "").trim();
   const note = String(tx?.note || "").trim();
+  const createdAt = tx?.createdAt && !Number.isNaN(new Date(tx.createdAt).getTime()) ? tx.createdAt : date;
 
   if (!id) throw new Error("交易缺少 id");
   if (!USERS.includes(payer)) throw new Error("付款人只能是 T、A 或 C");
@@ -57,7 +60,7 @@ function normalizeTransaction(tx) {
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("金额必须大于 0");
   if (!date || Number.isNaN(new Date(date).getTime())) throw new Error("交易日期不能为空");
 
-  return { id, amount, payer, split, note, date };
+  return { id, amount, payer, split, note, date, createdAt };
 }
 
 function calculate(transactions) {
@@ -141,7 +144,7 @@ async function readBlobTransactions() {
     return readLocalTransactions();
   }
 
-  const result = await get(BLOB_PATH, { access: BLOB_ACCESS, token });
+  const result = await get(BLOB_PATH, { access: BLOB_ACCESS, token, useCache: false });
   if (!result || result.statusCode !== 200 || !result.stream) {
     return [];
   }
@@ -168,13 +171,25 @@ async function writeBlobTransactions(transactions) {
     contentType: "application/json; charset=utf-8",
     addRandomSuffix: false,
     allowOverwrite: true,
-    cacheControlMaxAge: 60,
+    cacheControlMaxAge: 0,
   });
 }
 
 async function listTransactions() {
   const transactions = await readBlobTransactions();
-  return transactions.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  return transactions
+    .map((tx) => {
+      try {
+        return normalizeTransaction(tx);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const createdCompare = String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+      return createdCompare || String(b.date || "").localeCompare(String(a.date || ""));
+    });
 }
 
 async function addTransaction(tx) {

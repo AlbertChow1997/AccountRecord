@@ -13,6 +13,7 @@ type Transaction = {
   split: SplitMode;
   note: string;
   date: string;
+  createdAt?: string;
 };
 
 type PersonTotal = {
@@ -36,13 +37,19 @@ const currency = new Intl.NumberFormat("zh-CN", {
   minimumFractionDigits: 2
 });
 
+function dateOnly(dateText: string) {
+  return dateText.slice(0, 10);
+}
+
+function dateFromInputValue(value: string) {
+  return new Date(`${value}T00:00:00.000Z`);
+}
+
 function getWeekStart(dateText: string) {
-  const date = new Date(dateText);
-  const day = date.getDay() || 7;
-  const monday = new Date(date);
-  monday.setDate(date.getDate() - day + 1);
-  monday.setHours(0, 0, 0, 0);
-  return monday.toISOString().slice(0, 10);
+  const date = dateFromInputValue(dateOnly(dateText));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() - day + 1);
+  return date.toISOString().slice(0, 10);
 }
 
 function todayInputValue() {
@@ -50,9 +57,9 @@ function todayInputValue() {
 }
 
 function formatWeek(start: string) {
-  const begin = new Date(`${start}T00:00:00`);
+  const begin = dateFromInputValue(start);
   const end = new Date(begin);
-  end.setDate(begin.getDate() + 6);
+  end.setUTCDate(begin.getUTCDate() + 6);
   return `${start} 至 ${end.toISOString().slice(0, 10)}`;
 }
 
@@ -84,21 +91,58 @@ function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
 
+  async function refreshLedger(options?: { silent?: boolean }) {
+    if (!options?.silent) {
+      setIsLoading(true);
+    }
+    try {
+      const data = await requestLedger();
+      setTransactions(data.transactions);
+      setSummaries(data.weeks);
+      setDatabase(data.database);
+      setError("");
+    } catch (err) {
+      if (!options?.silent) {
+        setError(err instanceof Error ? err.message : "账本同步失败");
+      }
+    } finally {
+      if (!options?.silent) {
+        setIsLoading(false);
+      }
+    }
+  }
+
   useEffect(() => {
-    requestLedger()
-      .then((data) => {
-        setTransactions(data.transactions);
-        setSummaries(data.weeks);
-        setDatabase(data.database);
-        setError("");
-      })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setIsLoading(false));
+    refreshLedger();
+    const timer = window.setInterval(() => {
+      if (!document.hidden) {
+        refreshLedger({ silent: true });
+      }
+    }, 8000);
+
+    return () => window.clearInterval(timer);
   }, []);
 
-  const currentWeek = useMemo(() => summaries.find((week) => week.weekStart === getWeekStart(new Date().toISOString())), [summaries]);
+  const currentWeek = useMemo(() => summaries.find((week) => week.weekStart === getWeekStart(todayInputValue())), [summaries]);
+  const transactionsByWeek = useMemo(() => {
+    const groups = new Map<string, Transaction[]>();
+    for (const tx of transactions) {
+      const week = getWeekStart(tx.date);
+      groups.set(week, [...(groups.get(week) ?? []), tx]);
+    }
+    for (const [week, items] of groups.entries()) {
+      groups.set(
+        week,
+        [...items].sort((a, b) => dateOnly(b.date).localeCompare(dateOnly(a.date)) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+      );
+    }
+    return groups;
+  }, [transactions]);
   const recentTransactions = useMemo(
-    () => [...transactions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8),
+    () =>
+      [...transactions]
+        .sort((a, b) => String(b.createdAt || b.date).localeCompare(String(a.createdAt || a.date)))
+        .slice(0, 12),
     [transactions]
   );
 
@@ -116,7 +160,8 @@ function App() {
         payer,
         split,
         note: note.trim(),
-        date: new Date(`${date}T12:00:00`).toISOString()
+        date: `${date}T00:00:00.000Z`,
+        createdAt: new Date().toISOString()
       };
       const data = await requestLedger("/api/ledger", {
         method: "POST",
@@ -262,6 +307,7 @@ function App() {
               <article className="week-card" key={week.weekStart}>
                 <header>
                   <strong>{formatWeek(week.weekStart)}</strong>
+                  <span>{transactionsByWeek.get(week.weekStart)?.length ?? 0} 笔</span>
                 </header>
                 <div className="week-table">
                   {USERS.map((user) => (
@@ -269,6 +315,17 @@ function App() {
                       <span>{user}</span>
                       <span>应付 {currency.format(week.totals[user].payable)}</span>
                       <span>应收 {currency.format(week.totals[user].receivable)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="week-transactions">
+                  {(transactionsByWeek.get(week.weekStart) ?? []).map((tx) => (
+                    <div className="week-transaction" key={tx.id}>
+                      <span>{dateOnly(tx.date)}</span>
+                      <strong>{currency.format(tx.amount)}</strong>
+                      <small>
+                        {tx.payer} 付款 · {tx.split === "all" ? "三人均分" : "T 与 A 均分"} · {tx.note || "无备注"}
+                      </small>
                     </div>
                   ))}
                 </div>
@@ -290,7 +347,7 @@ function App() {
                   <strong>{currency.format(tx.amount)}</strong>
                   <span>{tx.note || "无备注"}</span>
                   <small>
-                    {tx.payer} 付款 · {tx.split === "all" ? "三人均分" : "T 与 A 均分"} · {tx.date.slice(0, 10)}
+                    {tx.payer} 付款 · {tx.split === "all" ? "三人均分" : "T 与 A 均分"} · {dateOnly(tx.date)}
                   </small>
                 </div>
                 <button type="button" onClick={() => removeTransaction(tx.id)} aria-label="删除交易" disabled={isSaving}>

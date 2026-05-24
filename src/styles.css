@@ -313,7 +313,17 @@ textarea {
 }
 
 .week-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 12px;
+}
+
+.week-card header span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .week-table {
@@ -335,6 +345,33 @@ textarea {
 .week-row span:first-child {
   color: #0f172a;
   font-weight: 900;
+}
+
+.week-transactions {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #eef2f7;
+}
+
+.week-transaction {
+  display: grid;
+  grid-template-columns: 90px 92px 1fr;
+  align-items: center;
+  gap: 10px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.week-transaction strong {
+  color: #111827;
+  font-size: 14px;
+}
+
+.week-transaction small {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .transaction-item {
@@ -425,5 +462,10 @@ textarea {
 
   .week-row span:last-child {
     grid-column: 2;
+  }
+
+  .week-transaction {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 }
