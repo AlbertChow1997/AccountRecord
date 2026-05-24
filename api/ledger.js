@@ -1,0 +1,255 @@
+import { get, put } from "@vercel/blob";
+import { readFile, writeFile } from "node:fs/promises";
+
+const USERS = ["T", "A", "C"];
+const SPLITS = ["all", "ta"];
+const BLOB_STORE_NAME = "AccountRecords";
+const BLOB_PATH = `${BLOB_STORE_NAME}/transactions.json`;
+const BLOB_ACCESS = process.env.BLOB_ACCESS || "private";
+const LOCAL_STORE = "/tmp/account-record-transactions.json";
+
+function blobToken() {
+  return process.env.ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN || "";
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function toCents(value) {
+  return Math.round(Number(value) * 100);
+}
+
+function fromCents(value) {
+  return roundMoney(value / 100);
+}
+
+function weekStart(dateText) {
+  const date = new Date(dateText);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("交易日期格式不正确");
+  }
+
+  const monday = new Date(date);
+  const day = monday.getUTCDay() || 7;
+  monday.setUTCDate(monday.getUTCDate() - day + 1);
+  monday.setUTCHours(0, 0, 0, 0);
+  return monday.toISOString().slice(0, 10);
+}
+
+function emptyTotals() {
+  return Object.fromEntries(
+    USERS.map((user) => [user, { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 }])
+  );
+}
+
+function normalizeTransaction(tx) {
+  const amount = roundMoney(tx?.amount);
+  const payer = tx?.payer;
+  const split = tx?.split;
+  const date = tx?.date;
+  const id = String(tx?.id || "").trim();
+  const note = String(tx?.note || "").trim();
+
+  if (!id) throw new Error("交易缺少 id");
+  if (!USERS.includes(payer)) throw new Error("付款人只能是 T、A 或 C");
+  if (!SPLITS.includes(split)) throw new Error("分摊方式只能是 all 或 ta");
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("金额必须大于 0");
+  if (!date || Number.isNaN(new Date(date).getTime())) throw new Error("交易日期不能为空");
+
+  return { id, amount, payer, split, note, date };
+}
+
+function calculate(transactions) {
+  const weeks = new Map();
+
+  for (const tx of transactions) {
+    let normalized;
+    try {
+      normalized = normalizeTransaction(tx);
+    } catch {
+      continue;
+    }
+
+    const week = weekStart(normalized.date);
+    const totals = weeks.get(week) || emptyTotals();
+    const participants = normalized.split === "all" ? USERS : ["T", "A"];
+    const cents = toCents(normalized.amount);
+    const baseShare = Math.floor(cents / participants.length);
+    const remainder = cents % participants.length;
+
+    totals[normalized.payer].paid += cents;
+    participants.forEach((user, index) => {
+      totals[user].share += baseShare + (index < remainder ? 1 : 0);
+    });
+    weeks.set(week, totals);
+  }
+
+  return [...weeks.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([week, totals]) => ({
+      weekStart: week,
+      totals: Object.fromEntries(
+        USERS.map((user) => {
+          const paid = totals[user].paid;
+          const share = totals[user].share;
+          const net = share - paid;
+          return [
+            user,
+            {
+              paid: fromCents(paid),
+              share: fromCents(share),
+              payable: fromCents(Math.max(net, 0)),
+              receivable: fromCents(Math.max(-net, 0)),
+              net: fromCents(net),
+            },
+          ];
+        })
+      ),
+    }));
+}
+
+async function streamToText(stream) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+
+  return text + decoder.decode();
+}
+
+async function readLocalTransactions() {
+  try {
+    return JSON.parse(await readFile(LOCAL_STORE, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+async function writeLocalTransactions(transactions) {
+  await writeFile(LOCAL_STORE, JSON.stringify(transactions, null, 2), "utf8");
+}
+
+async function readBlobTransactions() {
+  const token = blobToken();
+  if (!token) {
+    return readLocalTransactions();
+  }
+
+  const result = await get(BLOB_PATH, { access: BLOB_ACCESS, token });
+  if (!result || result.statusCode !== 200 || !result.stream) {
+    return [];
+  }
+
+  const text = await streamToText(result.stream);
+  if (!text.trim()) {
+    return [];
+  }
+
+  const data = JSON.parse(text);
+  return Array.isArray(data.transactions) ? data.transactions : [];
+}
+
+async function writeBlobTransactions(transactions) {
+  const token = blobToken();
+  if (!token) {
+    await writeLocalTransactions(transactions);
+    return;
+  }
+
+  await put(BLOB_PATH, JSON.stringify({ transactions }, null, 2), {
+    access: BLOB_ACCESS,
+    token,
+    contentType: "application/json; charset=utf-8",
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    cacheControlMaxAge: 60,
+  });
+}
+
+async function listTransactions() {
+  const transactions = await readBlobTransactions();
+  return transactions.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+}
+
+async function addTransaction(tx) {
+  const normalized = normalizeTransaction(tx);
+  const transactions = (await listTransactions()).filter((item) => item.id !== normalized.id);
+  transactions.unshift(normalized);
+  await writeBlobTransactions(transactions);
+}
+
+async function deleteTransaction(id) {
+  const txId = String(id || "").trim();
+  if (!txId) throw new Error("缺少要删除的交易 id");
+
+  const transactions = (await listTransactions()).filter((item) => item.id !== txId);
+  await writeBlobTransactions(transactions);
+}
+
+async function ledgerPayload() {
+  const transactions = await listTransactions();
+  return {
+    transactions,
+    weeks: calculate(transactions),
+    database: blobToken() ? "vercel-blob" : "local-file",
+    store: BLOB_STORE_NAME,
+    path: BLOB_PATH,
+  };
+}
+
+function sendJson(res, status, payload) {
+  res.status(status).setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.end(JSON.stringify(payload));
+}
+
+function requestBody(req) {
+  if (req.body && typeof req.body === "object") {
+    return req.body;
+  }
+
+  if (typeof req.body === "string" && req.body.trim()) {
+    return JSON.parse(req.body);
+  }
+
+  return {};
+}
+
+export default async function handler(req, res) {
+  try {
+    if (req.method === "OPTIONS") {
+      sendJson(res, 204, {});
+      return;
+    }
+
+    if (req.method === "GET") {
+      sendJson(res, 200, await ledgerPayload());
+      return;
+    }
+
+    if (req.method === "POST") {
+      const payload = requestBody(req);
+      await addTransaction(payload.transaction || payload);
+      sendJson(res, 200, await ledgerPayload());
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      await deleteTransaction(req.query?.id);
+      sendJson(res, 200, await ledgerPayload());
+      return;
+    }
+
+    sendJson(res, 405, { error: "Method not allowed" });
+  } catch (error) {
+    sendJson(res, 400, { error: error instanceof Error ? error.message : "账本请求失败" });
+  }
+}

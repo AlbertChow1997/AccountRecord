@@ -1,6 +1,6 @@
 # 三人记账系统
 
-一个面向 T、A、C 三个用户的简易记账系统。前端使用 React 19，后端使用 Vercel Python Serverless Function，并通过 Vercel KV 保存多人共享账本。
+一个面向 T、A、C 三个用户的简易记账系统。前端使用 React 19，后端使用 Vercel Node Serverless Function，并通过 Vercel Blob 保存多人共享账本。
 
 ## 功能
 
@@ -8,7 +8,7 @@
 - 支持三人均分，或 T 与 A 均分
 - 每次新增或删除交易后自动刷新本周每个人的应付款
 - 首页展示历史每周每人的应付、应收情况
-- 交易记录保存到 Vercel KV，多人打开同一个部署地址会看到同一份数据
+- 交易记录保存到 Vercel Blob，多人打开同一个部署地址会看到同一份数据
 
 ## 本地运行
 
@@ -23,27 +23,29 @@ npm run dev
 vercel dev
 ```
 
-如果本地没有配置 KV 环境变量，后端会临时使用 `/tmp/account-record-transactions.json` 保存数据，方便调试。
+如果本地没有配置 Blob 环境变量，后端会临时使用 `/tmp/account-record-transactions.json` 保存数据，方便调试。
 
 ## 部署到 Vercel
 
-1. 在 Vercel 项目中进入 Storage，创建一个 KV 数据库并连接到当前项目。
-2. Vercel 会自动注入 `KV_REST_API_URL` 和 `KV_REST_API_TOKEN` 环境变量。
-3. 部署项目：
+1. 在 Vercel 项目中进入 Storage，创建一个 Blob Store，名称填 `AccountRecords`。
+2. 将这个 Blob Store 连接到当前项目。
+3. Vercel 会自动注入 `BLOB_READ_WRITE_TOKEN` 环境变量。
+4. 如果 Vercel 给你的变量名是自定义前缀，也可以手动新增 `ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN`。
+5. 部署项目：
 
 ```bash
 npm run build
 vercel
 ```
 
-Vercel 会构建 React 静态资源，并把 `api/ledger.py` 作为 Python API 部署。
+Vercel 会构建 React 静态资源，并把 `api/ledger.js` 作为 Serverless API 部署。
 
 ## 数据说明
 
-线上环境使用 Vercel KV 存储交易记录。后端会使用 Redis Set 保存交易 ID，并用独立 key 保存每笔交易，新增和删除不会依赖浏览器本地数据。
+线上环境使用 Vercel Blob 存储交易记录。后端会把所有交易保存到 `AccountRecords/transactions.json`，新增和删除都会覆盖更新这个共享 JSON 文件。
 
 可选环境变量：
 
-- `KV_REST_API_URL`：Vercel KV REST 地址
-- `KV_REST_API_TOKEN`：Vercel KV REST Token
-- `ACCOUNT_RECORD_KEY_PREFIX`：账本 key 前缀，默认 `account-record`
+- `BLOB_READ_WRITE_TOKEN`：Vercel Blob 默认读写 Token
+- `ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN`：可选，自定义的 AccountRecords Blob Store Token
+- `BLOB_ACCESS`：Blob 访问级别，默认 `private`

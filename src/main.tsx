@@ -163,7 +163,7 @@ function App() {
       </section>
 
       <section className="sync-bar">
-        <span>数据源：{database === "vercel-kv" ? "Vercel KV 共享数据库" : database === "local-file" ? "本地临时文件" : "连接中"}</span>
+        <span>数据源：{database === "vercel-blob" ? "Vercel Blob 共享存储" : database === "local-file" ? "本地临时文件" : "连接中"}</span>
         {isSaving && <strong>正在同步...</strong>}
         {error && <strong className="sync-error">{error}</strong>}
       </section>
