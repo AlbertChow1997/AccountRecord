@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { CalendarDays, Check, CircleDollarSign, ReceiptText, Trash2, Users } from "lucide-react";
+import { CalendarDays, Check, CircleDollarSign, ReceiptText, RotateCcw, Trash2, Users } from "lucide-react";
 import "./styles.css";
 
 type User = "T" | "A" | "C";
@@ -8,9 +8,10 @@ type SplitMode = "all" | "ta";
 
 type Transaction = {
   id: string;
+  type?: "transaction" | "settlement";
   amount: number;
-  payer: User;
-  split: SplitMode;
+  payer?: User;
+  split?: SplitMode;
   note: string;
   date: string;
   createdAt?: string;
@@ -30,6 +31,11 @@ type WeekSummary = {
 };
 
 const USERS: User[] = ["T", "A", "C"];
+const EMPTY_TOTALS: Record<User, PersonTotal> = {
+  T: { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 },
+  A: { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 },
+  C: { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 }
+};
 
 const currency = new Intl.NumberFormat("zh-CN", {
   style: "currency",
@@ -75,7 +81,7 @@ async function requestLedger(path = "/api/ledger", options?: RequestInit) {
   if (!response.ok) {
     throw new Error(data.error || "账本同步失败");
   }
-  return data as { transactions: Transaction[]; weeks: WeekSummary[]; database: string };
+  return data as { transactions: Transaction[]; weeks: WeekSummary[]; currentTotals: Record<User, PersonTotal>; database: string };
 }
 
 function App() {
@@ -86,10 +92,12 @@ function App() {
   const [note, setNote] = useState("");
   const [date, setDate] = useState(todayInputValue());
   const [summaries, setSummaries] = useState<WeekSummary[]>([]);
+  const [currentTotals, setCurrentTotals] = useState<Record<User, PersonTotal>>(EMPTY_TOTALS);
   const [database, setDatabase] = useState("loading");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
+  const [showSettleConfirm, setShowSettleConfirm] = useState(false);
 
   async function refreshLedger(options?: { silent?: boolean }) {
     if (!options?.silent) {
@@ -99,6 +107,7 @@ function App() {
       const data = await requestLedger();
       setTransactions(data.transactions);
       setSummaries(data.weeks);
+      setCurrentTotals(data.currentTotals);
       setDatabase(data.database);
       setError("");
     } catch (err) {
@@ -123,10 +132,10 @@ function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const currentWeek = useMemo(() => summaries.find((week) => week.weekStart === getWeekStart(todayInputValue())), [summaries]);
   const transactionsByWeek = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
     for (const tx of transactions) {
+      if (tx.type === "settlement") continue;
       const week = getWeekStart(tx.date);
       groups.set(week, [...(groups.get(week) ?? []), tx]);
     }
@@ -145,6 +154,7 @@ function App() {
         .slice(0, 12),
     [transactions]
   );
+  const hasCurrentBalance = USERS.some((user) => currentTotals[user].payable > 0 || currentTotals[user].receivable > 0);
 
   async function addTransaction(event: React.FormEvent) {
     event.preventDefault();
@@ -156,6 +166,7 @@ function App() {
     try {
       const transaction: Transaction = {
         id: crypto.randomUUID(),
+        type: "transaction",
         amount: Number(value.toFixed(2)),
         payer,
         split,
@@ -169,6 +180,7 @@ function App() {
       });
       setTransactions(data.transactions);
       setSummaries(data.weeks);
+      setCurrentTotals(data.currentTotals);
       setDatabase(data.database);
       setAmount("");
       setNote("");
@@ -186,9 +198,39 @@ function App() {
       const data = await requestLedger(`/api/ledger?id=${encodeURIComponent(id)}`, { method: "DELETE" });
       setTransactions(data.transactions);
       setSummaries(data.weeks);
+      setCurrentTotals(data.currentTotals);
       setDatabase(data.database);
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除交易失败");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function settleCurrentBalance() {
+    setIsSaving(true);
+    setError("");
+    try {
+      const now = new Date().toISOString();
+      const settlement: Transaction = {
+        id: crypto.randomUUID(),
+        type: "settlement",
+        amount: 0,
+        note: "结算",
+        date: `${todayInputValue()}T00:00:00.000Z`,
+        createdAt: now
+      };
+      const data = await requestLedger("/api/ledger", {
+        method: "POST",
+        body: JSON.stringify({ transaction: settlement })
+      });
+      setTransactions(data.transactions);
+      setSummaries(data.weeks);
+      setCurrentTotals(data.currentTotals);
+      setDatabase(data.database);
+      setShowSettleConfirm(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "结算失败");
     } finally {
       setIsSaving(false);
     }
@@ -275,19 +317,25 @@ function App() {
         </form>
 
         <section className="summary-panel">
-          <div className="panel-title">
-            <CalendarDays size={22} />
-            <h2>本周应付款</h2>
+          <div className="panel-title summary-title">
+            <div>
+              <CalendarDays size={22} />
+              <h2>当前应付款</h2>
+            </div>
+            <button type="button" className="settle-button" onClick={() => setShowSettleConfirm(true)} disabled={isSaving || isLoading || !hasCurrentBalance}>
+              <RotateCcw size={17} />
+              结算
+            </button>
           </div>
           <div className="people-grid">
             {USERS.map((user) => {
-              const total = currentWeek?.totals[user] ?? { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 };
+              const total = currentTotals[user] ?? EMPTY_TOTALS[user];
               return (
                 <article className="person-card" key={user}>
                   <strong>{user}</strong>
                   <span>应付 {currency.format(total.payable)}</span>
+                  <em>应收 {currency.format(total.receivable)}</em>
                   <small>已付 {currency.format(total.paid)} / 应分摊 {currency.format(total.share)}</small>
-                  {total.receivable > 0 && <em>应收 {currency.format(total.receivable)}</em>}
                 </article>
               );
             })}
@@ -344,11 +392,21 @@ function App() {
             {recentTransactions.map((tx) => (
               <article className="transaction-item" key={tx.id}>
                 <div>
-                  <strong>{currency.format(tx.amount)}</strong>
-                  <span>{tx.note || "无备注"}</span>
-                  <small>
-                    {tx.payer} 付款 · {tx.split === "all" ? "三人均分" : "T 与 A 均分"} · {dateOnly(tx.date)}
-                  </small>
+                  {tx.type === "settlement" ? (
+                    <>
+                      <strong>结算</strong>
+                      <span>{tx.note || "结算"}</span>
+                      <small>当前应付款已重置 · {dateOnly(tx.date)}</small>
+                    </>
+                  ) : (
+                    <>
+                      <strong>{currency.format(tx.amount)}</strong>
+                      <span>{tx.note || "无备注"}</span>
+                      <small>
+                        {tx.payer} 付款 · {tx.split === "all" ? "三人均分" : "T 与 A 均分"} · {dateOnly(tx.date)}
+                      </small>
+                    </>
+                  )}
                 </div>
                 <button type="button" onClick={() => removeTransaction(tx.id)} aria-label="删除交易" disabled={isSaving}>
                   <Trash2 size={17} />
@@ -358,6 +416,23 @@ function App() {
           </div>
         </section>
       </section>
+
+      {showSettleConfirm && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="settle-title">
+            <h2 id="settle-title">确认结算</h2>
+            <p>结算后当前应付款会重置为 0，并在最近交易中生成一条结算记录。</p>
+            <div className="modal-actions">
+              <button type="button" className="ghost-button" onClick={() => setShowSettleConfirm(false)} disabled={isSaving}>
+                取消
+              </button>
+              <button type="button" className="confirm-button" onClick={settleCurrentBalance} disabled={isSaving}>
+                {isSaving ? "结算中" : "确定结算"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

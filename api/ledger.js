@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 
 const USERS = ["T", "A", "C"];
 const SPLITS = ["all", "ta"];
+const RECORD_TYPES = ["transaction", "settlement"];
 const BLOB_STORE_NAME = "AccountRecords";
 const BLOB_PATH = `${BLOB_STORE_NAME}/transactions.json`;
 const BLOB_ACCESS = process.env.BLOB_ACCESS || "private";
@@ -46,7 +47,8 @@ function emptyTotals() {
 }
 
 function normalizeTransaction(tx) {
-  const amount = roundMoney(tx?.amount);
+  const type = RECORD_TYPES.includes(tx?.type) ? tx.type : "transaction";
+  const amount = type === "settlement" ? 0 : roundMoney(tx?.amount);
   const payer = tx?.payer;
   const split = tx?.split;
   const date = tx?.date;
@@ -55,15 +57,52 @@ function normalizeTransaction(tx) {
   const createdAt = tx?.createdAt && !Number.isNaN(new Date(tx.createdAt).getTime()) ? tx.createdAt : date;
 
   if (!id) throw new Error("交易缺少 id");
+  if (!date || Number.isNaN(new Date(date).getTime())) throw new Error("交易日期不能为空");
+
+  if (type === "settlement") {
+    return { id, type, amount, note: note || "结算", date, createdAt };
+  }
+
   if (!USERS.includes(payer)) throw new Error("付款人只能是 T、A 或 C");
   if (!SPLITS.includes(split)) throw new Error("分摊方式只能是 all 或 ta");
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("金额必须大于 0");
-  if (!date || Number.isNaN(new Date(date).getTime())) throw new Error("交易日期不能为空");
 
-  return { id, amount, payer, split, note, date, createdAt };
+  return { id, type, amount, payer, split, note, date, createdAt };
 }
 
-function calculate(transactions) {
+function applyTransactionToTotals(totals, normalized) {
+  const participants = normalized.split === "all" ? USERS : ["T", "A"];
+  const cents = toCents(normalized.amount);
+  const baseShare = Math.floor(cents / participants.length);
+  const remainder = cents % participants.length;
+
+  totals[normalized.payer].paid += cents;
+  participants.forEach((user, index) => {
+    totals[user].share += baseShare + (index < remainder ? 1 : 0);
+  });
+}
+
+function finalizeTotals(totals) {
+  return Object.fromEntries(
+    USERS.map((user) => {
+      const paid = totals[user].paid;
+      const share = totals[user].share;
+      const net = share - paid;
+      return [
+        user,
+        {
+          paid: fromCents(paid),
+          share: fromCents(share),
+          payable: fromCents(Math.max(net, 0)),
+          receivable: fromCents(Math.max(-net, 0)),
+          net: fromCents(net),
+        },
+      ];
+    })
+  );
+}
+
+function calculateWeekly(transactions) {
   const weeks = new Map();
 
   for (const tx of transactions) {
@@ -73,18 +112,11 @@ function calculate(transactions) {
     } catch {
       continue;
     }
+    if (normalized.type === "settlement") continue;
 
     const week = weekStart(normalized.date);
     const totals = weeks.get(week) || emptyTotals();
-    const participants = normalized.split === "all" ? USERS : ["T", "A"];
-    const cents = toCents(normalized.amount);
-    const baseShare = Math.floor(cents / participants.length);
-    const remainder = cents % participants.length;
-
-    totals[normalized.payer].paid += cents;
-    participants.forEach((user, index) => {
-      totals[user].share += baseShare + (index < remainder ? 1 : 0);
-    });
+    applyTransactionToTotals(totals, normalized);
     weeks.set(week, totals);
   }
 
@@ -92,24 +124,30 @@ function calculate(transactions) {
     .sort(([a], [b]) => b.localeCompare(a))
     .map(([week, totals]) => ({
       weekStart: week,
-      totals: Object.fromEntries(
-        USERS.map((user) => {
-          const paid = totals[user].paid;
-          const share = totals[user].share;
-          const net = share - paid;
-          return [
-            user,
-            {
-              paid: fromCents(paid),
-              share: fromCents(share),
-              payable: fromCents(Math.max(net, 0)),
-              receivable: fromCents(Math.max(-net, 0)),
-              net: fromCents(net),
-            },
-          ];
-        })
-      ),
+      totals: finalizeTotals(totals),
     }));
+}
+
+function calculateCurrentTotals(transactions) {
+  const latestSettlement = transactions
+    .filter((tx) => tx.type === "settlement")
+    .map((tx) => tx.createdAt || tx.date)
+    .sort((a, b) => String(b).localeCompare(String(a)))[0];
+  const totals = emptyTotals();
+
+  for (const tx of transactions) {
+    let normalized;
+    try {
+      normalized = normalizeTransaction(tx);
+    } catch {
+      continue;
+    }
+    if (normalized.type === "settlement") continue;
+    if (latestSettlement && String(normalized.createdAt || normalized.date) <= String(latestSettlement)) continue;
+    applyTransactionToTotals(totals, normalized);
+  }
+
+  return finalizeTotals(totals);
 }
 
 async function streamToText(stream) {
@@ -211,7 +249,8 @@ async function ledgerPayload() {
   const transactions = await listTransactions();
   return {
     transactions,
-    weeks: calculate(transactions),
+    weeks: calculateWeekly(transactions),
+    currentTotals: calculateCurrentTotals(transactions),
     database: blobToken() ? "vercel-blob" : "local-file",
     store: BLOB_STORE_NAME,
     path: BLOB_PATH,

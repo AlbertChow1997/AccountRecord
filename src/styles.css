@@ -148,8 +148,36 @@ h2 {
   justify-content: flex-start;
 }
 
+.summary-title {
+  justify-content: space-between;
+}
+
+.summary-title div,
+.settle-button,
+.modal-actions {
+  display: inline-flex;
+  align-items: center;
+}
+
+.summary-title div {
+  gap: 10px;
+}
+
 .panel-title svg {
   color: #047857;
+}
+
+.settle-button {
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #065f46;
+  font-weight: 800;
+  padding: 0 12px;
+  white-space: nowrap;
 }
 
 label,
@@ -278,7 +306,7 @@ textarea {
   color: #111827;
   font-size: 18px;
   font-weight: 900;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .person-card small {
@@ -290,7 +318,7 @@ textarea {
   color: #b45309;
   font-style: normal;
   font-weight: 800;
-  margin-top: 8px;
+  margin-bottom: 8px;
 }
 
 .section-heading {
@@ -430,6 +458,60 @@ textarea {
   text-align: center;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.35);
+  padding: 20px;
+}
+
+.confirm-modal {
+  width: min(420px, 100%);
+  border: 1px solid #dedbd5;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 22px 70px rgba(15, 23, 42, 0.24);
+  padding: 22px;
+}
+
+.confirm-modal h2 {
+  margin-bottom: 10px;
+}
+
+.confirm-modal p {
+  color: #475569;
+  line-height: 1.6;
+}
+
+.modal-actions {
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.ghost-button,
+.confirm-button {
+  min-height: 40px;
+  border-radius: 8px;
+  padding: 0 14px;
+  font-weight: 850;
+}
+
+.ghost-button {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+}
+
+.confirm-button {
+  border: 0;
+  background: #c2410c;
+  color: #fff;
+}
+
 @media (max-width: 860px) {
   .app-shell {
     width: min(100% - 24px, 680px);
@@ -454,6 +536,10 @@ textarea {
   .people-grid,
   .split-options {
     grid-template-columns: 1fr;
+  }
+
+  .summary-title {
+    align-items: flex-start;
   }
 
   .week-row {
