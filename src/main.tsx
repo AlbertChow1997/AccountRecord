@@ -29,7 +29,6 @@ type WeekSummary = {
 };
 
 const USERS: User[] = ["T", "A", "C"];
-const STORAGE_KEY = "account-record-transactions-v1";
 
 const currency = new Intl.NumberFormat("zh-CN", {
   style: "currency",
@@ -46,54 +45,6 @@ function getWeekStart(dateText: string) {
   return monday.toISOString().slice(0, 10);
 }
 
-function localSummaries(transactions: Transaction[]): WeekSummary[] {
-  const weeks = new Map<string, WeekSummary>();
-
-  for (const tx of transactions) {
-    const weekStart = getWeekStart(tx.date);
-    if (!weeks.has(weekStart)) {
-      weeks.set(weekStart, {
-        weekStart,
-        totals: Object.fromEntries(
-          USERS.map((user) => [user, { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 }])
-        ) as Record<User, PersonTotal>
-      });
-    }
-
-    const week = weeks.get(weekStart)!;
-    const participants = tx.split === "all" ? USERS : (["T", "A"] as User[]);
-    const perPerson = Number((tx.amount / participants.length).toFixed(2));
-    week.totals[tx.payer].paid += tx.amount;
-    for (const user of participants) {
-      week.totals[user].share += perPerson;
-    }
-  }
-
-  const summaries = Array.from(weeks.values()).map((week) => {
-    for (const user of USERS) {
-      const total = week.totals[user];
-      const net = Number((total.share - total.paid).toFixed(2));
-      total.paid = Number(total.paid.toFixed(2));
-      total.share = Number(total.share.toFixed(2));
-      total.net = net;
-      total.payable = net > 0 ? net : 0;
-      total.receivable = net < 0 ? -net : 0;
-    }
-    return week;
-  });
-
-  return summaries.sort((a, b) => b.weekStart.localeCompare(a.weekStart));
-}
-
-function loadTransactions() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? (JSON.parse(stored) as Transaction[]) : [];
-  } catch {
-    return [];
-  }
-}
-
 function todayInputValue() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -105,31 +56,45 @@ function formatWeek(start: string) {
   return `${start} 至 ${end.toISOString().slice(0, 10)}`;
 }
 
+async function requestLedger(path = "/api/ledger", options?: RequestInit) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers
+    }
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "账本同步失败");
+  }
+  return data as { transactions: Transaction[]; weeks: WeekSummary[]; database: string };
+}
+
 function App() {
-  const [transactions, setTransactions] = useState<Transaction[]>(loadTransactions);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [amount, setAmount] = useState("");
   const [payer, setPayer] = useState<User>("T");
   const [split, setSplit] = useState<SplitMode>("all");
   const [note, setNote] = useState("");
   const [date, setDate] = useState(todayInputValue());
-  const [summaries, setSummaries] = useState<WeekSummary[]>(() => localSummaries(transactions));
+  const [summaries, setSummaries] = useState<WeekSummary[]>([]);
+  const [database, setDatabase] = useState("loading");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
-    const controller = new AbortController();
-
-    fetch("/api/ledger", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transactions }),
-      signal: controller.signal
-    })
-      .then((response) => (response.ok ? response.json() : Promise.reject(response)))
-      .then((data: { weeks: WeekSummary[] }) => setSummaries(data.weeks))
-      .catch(() => setSummaries(localSummaries(transactions)));
-
-    return () => controller.abort();
-  }, [transactions]);
+    requestLedger()
+      .then((data) => {
+        setTransactions(data.transactions);
+        setSummaries(data.weeks);
+        setDatabase(data.database);
+        setError("");
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setIsLoading(false));
+  }, []);
 
   const currentWeek = useMemo(() => summaries.find((week) => week.weekStart === getWeekStart(new Date().toISOString())), [summaries]);
   const recentTransactions = useMemo(
@@ -137,28 +102,51 @@ function App() {
     [transactions]
   );
 
-  function addTransaction(event: React.FormEvent) {
+  async function addTransaction(event: React.FormEvent) {
     event.preventDefault();
     const value = Number(amount);
     if (!Number.isFinite(value) || value <= 0) return;
 
-    setTransactions((current) => [
-      {
+    setIsSaving(true);
+    setError("");
+    try {
+      const transaction: Transaction = {
         id: crypto.randomUUID(),
         amount: Number(value.toFixed(2)),
         payer,
         split,
         note: note.trim(),
         date: new Date(`${date}T12:00:00`).toISOString()
-      },
-      ...current
-    ]);
-    setAmount("");
-    setNote("");
+      };
+      const data = await requestLedger("/api/ledger", {
+        method: "POST",
+        body: JSON.stringify({ transaction })
+      });
+      setTransactions(data.transactions);
+      setSummaries(data.weeks);
+      setDatabase(data.database);
+      setAmount("");
+      setNote("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存交易失败");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
-  function removeTransaction(id: string) {
-    setTransactions((current) => current.filter((tx) => tx.id !== id));
+  async function removeTransaction(id: string) {
+    setIsSaving(true);
+    setError("");
+    try {
+      const data = await requestLedger(`/api/ledger?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      setTransactions(data.transactions);
+      setSummaries(data.weeks);
+      setDatabase(data.database);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除交易失败");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -170,8 +158,14 @@ function App() {
         </div>
         <div className="total-chip">
           <ReceiptText size={18} />
-          <span>{transactions.length} 笔记录</span>
+          <span>{isLoading ? "同步中" : `${transactions.length} 笔记录`}</span>
         </div>
+      </section>
+
+      <section className="sync-bar">
+        <span>数据源：{database === "vercel-kv" ? "Vercel KV 共享数据库" : database === "local-file" ? "本地临时文件" : "连接中"}</span>
+        {isSaving && <strong>正在同步...</strong>}
+        {error && <strong className="sync-error">{error}</strong>}
       </section>
 
       <section className="workspace">
@@ -229,9 +223,9 @@ function App() {
             <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="餐饮、房租、水电..." rows={3} />
           </label>
 
-          <button className="submit-button" type="submit">
+          <button className="submit-button" type="submit" disabled={isSaving || isLoading}>
             <Check size={18} />
-            记录交易
+            {isSaving ? "同步中" : "记录交易"}
           </button>
         </form>
 
@@ -299,7 +293,7 @@ function App() {
                     {tx.payer} 付款 · {tx.split === "all" ? "三人均分" : "T 与 A 均分"} · {tx.date.slice(0, 10)}
                   </small>
                 </div>
-                <button type="button" onClick={() => removeTransaction(tx.id)} aria-label="删除交易">
+                <button type="button" onClick={() => removeTransaction(tx.id)} aria-label="删除交易" disabled={isSaving}>
                   <Trash2 size={17} />
                 </button>
               </article>

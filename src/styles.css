@@ -25,6 +25,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .app-shell {
   width: min(1160px, calc(100% - 32px));
   margin: 0 auto;
@@ -75,6 +80,30 @@ h2 {
   background: #fff;
   color: #475569;
   white-space: nowrap;
+}
+
+.sync-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  border: 1px solid #d9e4dd;
+  border-radius: 8px;
+  background: #f8fffb;
+  color: #475569;
+  padding: 10px 14px;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.sync-bar strong {
+  color: #047857;
+}
+
+.sync-bar .sync-error {
+  color: #b91c1c;
+  overflow-wrap: anywhere;
 }
 
 .workspace,
@@ -378,6 +407,11 @@ textarea {
 
   .topbar {
     display: grid;
+  }
+
+  .sync-bar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .people-grid,
