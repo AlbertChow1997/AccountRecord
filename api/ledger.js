@@ -1,4 +1,4 @@
-import { get, put } from "@vercel/blob";
+import { list, put } from "@vercel/blob";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -243,32 +243,33 @@ async function readBlobTransactions() {
   }
   assertValidBlobToken();
 
-  let lastError;
-  for (const access of blobAccessOptions()) {
-    try {
-      const result = await get(BLOB_PATH, { access, token, storeId: blobStoreId(), useCache: false });
-      if (!result || result.statusCode !== 200 || !result.stream) {
-        return [];
-      }
-
-      const text = await streamToText(result.stream);
-      if (!text.trim()) {
-        return [];
-      }
-
-      const data = JSON.parse(text);
-      return Array.isArray(data.transactions) ? data.transactions : [];
-    } catch (error) {
-      lastError = error;
-      if (!isAccessRetryable(error)) {
-        throw error;
-      }
-    }
+  let listed;
+  try {
+    listed = await list({ token, prefix: BLOB_PATH, limit: 10 });
+  } catch (error) {
+    throw new Error(
+      `Vercel Blob 列表读取失败：${error instanceof Error ? error.message : String(error)}。token=${tokenSource() || "未找到"}，storeId=${blobStoreId() || "未找到"}，path=${BLOB_PATH}`
+    );
   }
 
-  throw new Error(
-    `Vercel Blob 读取失败：${lastError instanceof Error ? lastError.message : String(lastError)}。token=${tokenSource() || "未找到"}，storeId=${blobStoreId() || "未找到"}，path=${BLOB_PATH}，access=${blobAccessOptions().join("/")}`
-  );
+  const blob = listed.blobs.find((item) => item.pathname === BLOB_PATH);
+  if (!blob) return [];
+
+  const response = await fetch(blob.url, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Vercel Blob 内容读取失败：${response.status} ${response.statusText}。token=${tokenSource() || "未找到"}，storeId=${blobStoreId() || "未找到"}，url=${blob.url}`
+    );
+  }
+
+  const text = await response.text();
+  if (!text.trim()) return [];
+
+  const data = JSON.parse(text);
+  return Array.isArray(data.transactions) ? data.transactions : [];
 }
 
 async function writeBlobTransactions(transactions) {
