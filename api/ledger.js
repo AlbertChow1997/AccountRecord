@@ -259,7 +259,7 @@ async function fetchBlobTransactionsFromUrl(url) {
 }
 
 async function waitForBlobWrite(blobUrl, expectedTransactions) {
-  const deadline = Date.now() + 8000;
+  const deadline = Date.now() + 20000;
   let lastSeen = null;
 
   while (Date.now() < deadline) {
