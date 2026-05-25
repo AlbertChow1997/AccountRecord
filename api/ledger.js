@@ -10,6 +10,10 @@ const BLOB_STORE_NAME = "AccountRecords";
 const BLOB_PATH = "transactions.json";
 const LOCAL_STORE = join(tmpdir(), "account-record-transactions.json");
 
+function cleanEnv(value) {
+  return String(value || "").trim().replace(/^["']|["']$/g, "").replace(/\s+/g, "");
+}
+
 function blobToken() {
   const rawToken =
     process.env.ACCOUNTRECORDS_READ_WRITE_TOKEN ||
@@ -20,12 +24,20 @@ function blobToken() {
     process.env.VERCEL_BLOB_READ_WRITE_TOKEN ||
     "";
 
-  return String(rawToken).trim().replace(/^["']|["']$/g, "").replace(/\s+/g, "");
+  return cleanEnv(rawToken);
 }
 
 function blobStoreId() {
-  const token = blobToken();
-  return token.split("_")[3] || "";
+  const configured =
+    process.env.ACCOUNTRECORDS_STORE_ID ||
+    process.env.ACCOUNT_RECORDS_STORE_ID ||
+    process.env.BLOB_STORE_ID ||
+    "";
+  const storeId = cleanEnv(configured);
+  if (storeId) return storeId;
+
+  const tokenStoreId = blobToken().split("_")[3] || "";
+  return tokenStoreId ? `store_${tokenStoreId}` : "";
 }
 
 function tokenSource() {
@@ -255,7 +267,7 @@ async function readBlobTransactions() {
   }
 
   throw new Error(
-    `Vercel Blob 读取失败：${lastError instanceof Error ? lastError.message : String(lastError)}。token=${tokenSource() || "未找到"}，path=${BLOB_PATH}，access=${blobAccessOptions().join("/")}`
+    `Vercel Blob 读取失败：${lastError instanceof Error ? lastError.message : String(lastError)}。token=${tokenSource() || "未找到"}，storeId=${blobStoreId() || "未找到"}，path=${BLOB_PATH}，access=${blobAccessOptions().join("/")}`
   );
 }
 
@@ -292,7 +304,7 @@ async function writeBlobTransactions(transactions) {
   }
 
   throw new Error(
-    `Vercel Blob 写入失败：${lastError instanceof Error ? lastError.message : String(lastError)}。token=${tokenSource() || "未找到"}，path=${BLOB_PATH}，access=${blobAccessOptions().join("/")}`
+    `Vercel Blob 写入失败：${lastError instanceof Error ? lastError.message : String(lastError)}。token=${tokenSource() || "未找到"}，storeId=${blobStoreId() || "未找到"}，path=${BLOB_PATH}，access=${blobAccessOptions().join("/")}`
   );
 }
 
