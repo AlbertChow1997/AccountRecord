@@ -2,12 +2,15 @@ import { list, put } from "@vercel/blob";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 
 const USERS = ["T", "A", "C"];
 const SPLITS = ["all", "tc", "ta"];
 const RECORD_TYPES = ["transaction", "settlement"];
 const BLOB_STORE_NAME = "AccountRecords";
 const BLOB_PATH = "transactions.json";
+const BLOB_LIST_PREFIX = "transactions";
+const BLOB_SNAPSHOT_PREFIX = "transactions/snapshot-";
 const LOCAL_STORE = join(tmpdir(), "account-record-transactions.json");
 
 function cleanEnv(value) {
@@ -70,6 +73,18 @@ function assertValidBlobToken() {
 function isAccessRetryable(error) {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("400") || message.includes("Bad Request") || message.includes("access");
+}
+
+function snapshotPath() {
+  return `${BLOB_SNAPSHOT_PREFIX}${Date.now()}-${randomUUID()}.json`;
+}
+
+function blobTimestamp(blob) {
+  const snapshotMatch = String(blob.pathname || "").match(/^transactions\/snapshot-(\d+)-/);
+  if (snapshotMatch) return Number(snapshotMatch[1]);
+
+  const uploadedAt = new Date(blob.uploadedAt || blob.uploaded_at || 0).getTime();
+  return Number.isNaN(uploadedAt) ? 0 : uploadedAt;
 }
 
 function roundMoney(value) {
@@ -258,12 +273,33 @@ async function fetchBlobTransactionsFromUrl(url) {
   return Array.isArray(data.transactions) ? data.transactions : [];
 }
 
-async function waitForBlobWrite(blobUrl, expectedTransactions) {
+async function listLedgerBlobs(token) {
+  const blobs = [];
+  let cursor;
+
+  do {
+    const page = await list({ token, prefix: BLOB_LIST_PREFIX, limit: 100, cursor });
+    blobs.push(
+      ...page.blobs.filter((blob) => blob.pathname === BLOB_PATH || String(blob.pathname || "").startsWith(BLOB_SNAPSHOT_PREFIX))
+    );
+    cursor = page.cursor;
+  } while (cursor);
+
+  return blobs;
+}
+
+function latestLedgerBlob(blobs) {
+  return [...blobs].sort((a, b) => blobTimestamp(b) - blobTimestamp(a))[0];
+}
+
+async function waitForBlobWrite(expectedPath, expectedTransactions) {
   const deadline = Date.now() + 20000;
   let lastSeen = null;
 
   while (Date.now() < deadline) {
-    const actual = await fetchBlobTransactionsFromUrl(blobUrl);
+    const blobs = await listLedgerBlobs(blobToken());
+    const latest = latestLedgerBlob(blobs);
+    const actual = latest && latest.pathname === expectedPath ? await fetchBlobTransactionsFromUrl(latest.url) : null;
     if (actual && sameTransactionIds(actual, expectedTransactions)) {
       return;
     }
@@ -286,16 +322,16 @@ async function readBlobTransactions() {
   }
   assertValidBlobToken();
 
-  let listed;
+  let blobs;
   try {
-    listed = await list({ token, prefix: BLOB_PATH, limit: 10 });
+    blobs = await listLedgerBlobs(token);
   } catch (error) {
     throw new Error(
-      `Vercel Blob 列表读取失败：${error instanceof Error ? error.message : String(error)}。token=${tokenSource() || "未找到"}，storeId=${blobStoreId() || "未找到"}，path=${BLOB_PATH}`
+      `Vercel Blob 列表读取失败：${error instanceof Error ? error.message : String(error)}。token=${tokenSource() || "未找到"}，storeId=${blobStoreId() || "未找到"}，prefix=${BLOB_LIST_PREFIX}`
     );
   }
 
-  const blob = listed.blobs.find((item) => item.pathname === BLOB_PATH);
+  const blob = latestLedgerBlob(blobs);
   if (!blob) return [];
 
   const transactions = await fetchBlobTransactionsFromUrl(blob.url);
@@ -322,16 +358,16 @@ async function writeBlobTransactions(transactions) {
   let lastError;
   for (const access of blobAccessOptions()) {
     try {
-      const blob = await put(BLOB_PATH, JSON.stringify({ transactions }, null, 2), {
+      const path = snapshotPath();
+      await put(path, JSON.stringify({ transactions }, null, 2), {
         access,
         token,
         storeId: blobStoreId(),
         contentType: "application/json; charset=utf-8",
         addRandomSuffix: false,
-        allowOverwrite: true,
-        cacheControlMaxAge: 60,
+        allowOverwrite: false,
       });
-      await waitForBlobWrite(blob.url, transactions);
+      await waitForBlobWrite(path, transactions);
       return;
     } catch (error) {
       lastError = error;
@@ -342,7 +378,7 @@ async function writeBlobTransactions(transactions) {
   }
 
   throw new Error(
-    `Vercel Blob 写入失败：${lastError instanceof Error ? lastError.message : String(lastError)}。token=${tokenSource() || "未找到"}，storeId=${blobStoreId() || "未找到"}，path=${BLOB_PATH}，access=${blobAccessOptions().join("/")}`
+    `Vercel Blob 写入失败：${lastError instanceof Error ? lastError.message : String(lastError)}。token=${tokenSource() || "未找到"}，storeId=${blobStoreId() || "未找到"}，prefix=${BLOB_SNAPSHOT_PREFIX}，access=${blobAccessOptions().join("/")}`
   );
 }
 
