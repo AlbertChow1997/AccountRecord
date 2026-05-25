@@ -181,13 +181,17 @@ function App() {
   useEffect(() => {
     refreshLedger();
     const timer = window.setInterval(() => {
-      if (!document.hidden) {
+      if (!document.hidden && !isSaving) {
         refreshLedger({ silent: true });
       }
     }, 8000);
 
     return () => window.clearInterval(timer);
-  }, []);
+  }, [isSaving]);
+
+  function reloadAfterWrite() {
+    window.location.reload();
+  }
 
   const transactionsByWeek = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
@@ -232,20 +236,13 @@ function App() {
         date: `${date}T00:00:00.000Z`,
         createdAt: new Date().toISOString()
       };
-      const data = await requestLedger("/api/ledger", {
+      await requestLedger("/api/ledger", {
         method: "POST",
         body: JSON.stringify({ transaction })
       });
-      setTransactions(data.transactions);
-      setSummaries(data.weeks);
-      setCurrentTotals(data.currentTotals);
-      setDatabase(data.database);
-      setAmount("");
-      setNote("");
-      await refreshLedger({ silent: true });
+      reloadAfterWrite();
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存交易失败");
-    } finally {
       setIsSaving(false);
     }
   }
@@ -254,15 +251,10 @@ function App() {
     setIsSaving(true);
     setError("");
     try {
-      const data = await requestLedger(`/api/ledger?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-      setTransactions(data.transactions);
-      setSummaries(data.weeks);
-      setCurrentTotals(data.currentTotals);
-      setDatabase(data.database);
-      await refreshLedger({ silent: true });
+      await requestLedger(`/api/ledger?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      reloadAfterWrite();
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除交易失败");
-    } finally {
       setIsSaving(false);
     }
   }
@@ -280,19 +272,13 @@ function App() {
         date: `${todayInputValue()}T00:00:00.000Z`,
         createdAt: now
       };
-      const data = await requestLedger("/api/ledger", {
+      await requestLedger("/api/ledger", {
         method: "POST",
         body: JSON.stringify({ transaction: settlement })
       });
-      setTransactions(data.transactions);
-      setSummaries(data.weeks);
-      setCurrentTotals(data.currentTotals);
-      setDatabase(data.database);
-      setShowSettleConfirm(false);
-      await refreshLedger({ silent: true });
+      reloadAfterWrite();
     } catch (err) {
       setError(err instanceof Error ? err.message : "结算失败");
-    } finally {
       setIsSaving(false);
     }
   }
@@ -492,6 +478,15 @@ function App() {
               </button>
             </div>
           </section>
+        </div>
+      )}
+
+      {isSaving && (
+        <div className="saving-overlay" role="status" aria-live="polite">
+          <div>
+            <span className="spinner" />
+            <strong>正在写入并刷新...</strong>
+          </div>
         </div>
       )}
     </main>

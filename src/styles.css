@@ -512,6 +512,44 @@ textarea {
   color: #fff;
 }
 
+.saving-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(247, 247, 244, 0.72);
+  backdrop-filter: blur(2px);
+  padding: 20px;
+}
+
+.saving-overlay div {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #dedbd5;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 20px 58px rgba(15, 23, 42, 0.18);
+  padding: 16px 18px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid #d9e4dd;
+  border-top-color: #047857;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 860px) {
   .app-shell {
     width: min(100% - 24px, 680px);
