@@ -12,7 +12,25 @@ const BLOB_ACCESS = process.env.BLOB_ACCESS || "private";
 const LOCAL_STORE = join(tmpdir(), "account-record-transactions.json");
 
 function blobToken() {
-  return process.env.ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN || "";
+  return (
+    process.env.BLOB_READ_WRITE_TOKEN ||
+    process.env.ACCOUNTRECORDS_READ_WRITE_TOKEN ||
+    process.env.ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN ||
+    process.env.ACCOUNT_RECORDS_READ_WRITE_TOKEN ||
+    process.env.ACCOUNT_RECORDS_BLOB_READ_WRITE_TOKEN ||
+    process.env.VERCEL_BLOB_READ_WRITE_TOKEN ||
+    ""
+  );
+}
+
+function tokenSource() {
+  if (process.env.BLOB_READ_WRITE_TOKEN) return "BLOB_READ_WRITE_TOKEN";
+  if (process.env.ACCOUNTRECORDS_READ_WRITE_TOKEN) return "ACCOUNTRECORDS_READ_WRITE_TOKEN";
+  if (process.env.ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN) return "ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN";
+  if (process.env.ACCOUNT_RECORDS_READ_WRITE_TOKEN) return "ACCOUNT_RECORDS_READ_WRITE_TOKEN";
+  if (process.env.ACCOUNT_RECORDS_BLOB_READ_WRITE_TOKEN) return "ACCOUNT_RECORDS_BLOB_READ_WRITE_TOKEN";
+  if (process.env.VERCEL_BLOB_READ_WRITE_TOKEN) return "VERCEL_BLOB_READ_WRITE_TOKEN";
+  return "";
 }
 
 function roundMoney(value) {
@@ -179,6 +197,9 @@ async function writeLocalTransactions(transactions) {
 async function readBlobTransactions() {
   const token = blobToken();
   if (!token) {
+    if (process.env.VERCEL) {
+      throw new Error("Vercel Blob token 未配置，请检查 BLOB_READ_WRITE_TOKEN 或 ACCOUNTRECORDS_READ_WRITE_TOKEN");
+    }
     return readLocalTransactions();
   }
 
@@ -199,6 +220,9 @@ async function readBlobTransactions() {
 async function writeBlobTransactions(transactions) {
   const token = blobToken();
   if (!token) {
+    if (process.env.VERCEL) {
+      throw new Error("Vercel Blob token 未配置，请检查 BLOB_READ_WRITE_TOKEN 或 ACCOUNTRECORDS_READ_WRITE_TOKEN");
+    }
     await writeLocalTransactions(transactions);
     return;
   }
@@ -209,7 +233,7 @@ async function writeBlobTransactions(transactions) {
     contentType: "application/json; charset=utf-8",
     addRandomSuffix: false,
     allowOverwrite: true,
-    cacheControlMaxAge: 0,
+    cacheControlMaxAge: 60,
   });
 }
 
@@ -252,6 +276,7 @@ async function ledgerPayload() {
     weeks: calculateWeekly(transactions),
     currentTotals: calculateCurrentTotals(transactions),
     database: blobToken() ? "vercel-blob" : "local-file",
+    tokenSource: tokenSource(),
     store: BLOB_STORE_NAME,
     path: BLOB_PATH,
   };

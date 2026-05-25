@@ -30,7 +30,7 @@ vercel dev
 1. 在 Vercel 项目中进入 Storage，创建一个 Blob Store，名称填 `AccountRecords`。
 2. 将这个 Blob Store 连接到当前项目。
 3. Vercel 会自动注入 `BLOB_READ_WRITE_TOKEN` 环境变量。
-4. 如果 Vercel 给你的变量名是自定义前缀，也可以手动新增 `ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN`。
+4. 如果 Vercel 给你的变量名是自定义前缀，也可以手动新增 `ACCOUNTRECORDS_READ_WRITE_TOKEN`。
 5. 部署项目：
 
 ```bash
@@ -47,5 +47,6 @@ Vercel 会构建 React 静态资源，并把 `api/ledger.js` 作为 Serverless A
 可选环境变量：
 
 - `BLOB_READ_WRITE_TOKEN`：Vercel Blob 默认读写 Token
-- `ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN`：可选，自定义的 AccountRecords Blob Store Token
+- `ACCOUNTRECORDS_READ_WRITE_TOKEN`：可选，自定义前缀为 `ACCOUNTRECORDS` 时常见的 Blob Store Token
+- `ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN`：可选，兼容旧说明中的变量名
 - `BLOB_ACCESS`：Blob 访问级别，默认 `private`
