@@ -233,6 +233,49 @@ async function writeLocalTransactions(transactions) {
   await writeFile(LOCAL_STORE, JSON.stringify(transactions, null, 2), "utf8");
 }
 
+function sameTransactionIds(left, right) {
+  const leftIds = left.map((tx) => tx.id).sort();
+  const rightIds = right.map((tx) => tx.id).sort();
+  return leftIds.length === rightIds.length && leftIds.every((id, index) => id === rightIds[index]);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchBlobTransactionsFromUrl(url) {
+  const token = blobToken();
+  const target = new URL(url);
+  target.searchParams.set("_ledger_ts", String(Date.now()));
+  const response = await fetch(target.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!response.ok) return null;
+  const text = await response.text();
+  if (!text.trim()) return [];
+  const data = JSON.parse(text);
+  return Array.isArray(data.transactions) ? data.transactions : [];
+}
+
+async function waitForBlobWrite(blobUrl, expectedTransactions) {
+  const deadline = Date.now() + 8000;
+  let lastSeen = null;
+
+  while (Date.now() < deadline) {
+    const actual = await fetchBlobTransactionsFromUrl(blobUrl);
+    if (actual && sameTransactionIds(actual, expectedTransactions)) {
+      return;
+    }
+    lastSeen = actual;
+    await sleep(350);
+  }
+
+  throw new Error(
+    `Vercel Blob 写入后读取校验超时：expected=${expectedTransactions.length}，actual=${lastSeen ? lastSeen.length : "unreadable"}`
+  );
+}
+
 async function readBlobTransactions() {
   const token = blobToken();
   if (!token) {
@@ -255,21 +298,14 @@ async function readBlobTransactions() {
   const blob = listed.blobs.find((item) => item.pathname === BLOB_PATH);
   if (!blob) return [];
 
-  const response = await fetch(blob.url, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
-  if (!response.ok) {
+  const transactions = await fetchBlobTransactionsFromUrl(blob.url);
+  if (!transactions) {
     throw new Error(
-      `Vercel Blob 内容读取失败：${response.status} ${response.statusText}。token=${tokenSource() || "未找到"}，storeId=${blobStoreId() || "未找到"}，url=${blob.url}`
+      `Vercel Blob 内容读取失败。token=${tokenSource() || "未找到"}，storeId=${blobStoreId() || "未找到"}，url=${blob.url}`
     );
   }
 
-  const text = await response.text();
-  if (!text.trim()) return [];
-
-  const data = JSON.parse(text);
-  return Array.isArray(data.transactions) ? data.transactions : [];
+  return transactions;
 }
 
 async function writeBlobTransactions(transactions) {
@@ -286,7 +322,7 @@ async function writeBlobTransactions(transactions) {
   let lastError;
   for (const access of blobAccessOptions()) {
     try {
-      await put(BLOB_PATH, JSON.stringify({ transactions }, null, 2), {
+      const blob = await put(BLOB_PATH, JSON.stringify({ transactions }, null, 2), {
         access,
         token,
         storeId: blobStoreId(),
@@ -295,6 +331,7 @@ async function writeBlobTransactions(transactions) {
         allowOverwrite: true,
         cacheControlMaxAge: 60,
       });
+      await waitForBlobWrite(blob.url, transactions);
       return;
     } catch (error) {
       lastError = error;
