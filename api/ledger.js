@@ -8,7 +8,6 @@ const SPLITS = ["all", "ta"];
 const RECORD_TYPES = ["transaction", "settlement"];
 const BLOB_STORE_NAME = "AccountRecords";
 const BLOB_PATH = `${BLOB_STORE_NAME}/transactions.json`;
-const BLOB_ACCESS = process.env.BLOB_ACCESS || "private";
 const LOCAL_STORE = join(tmpdir(), "account-record-transactions.json");
 
 function blobToken() {
@@ -31,6 +30,18 @@ function tokenSource() {
   if (process.env.ACCOUNT_RECORDS_BLOB_READ_WRITE_TOKEN) return "ACCOUNT_RECORDS_BLOB_READ_WRITE_TOKEN";
   if (process.env.VERCEL_BLOB_READ_WRITE_TOKEN) return "VERCEL_BLOB_READ_WRITE_TOKEN";
   return "";
+}
+
+function blobAccessOptions() {
+  const configured = process.env.BLOB_ACCESS;
+  if (configured === "private") return ["private", "public"];
+  if (configured === "public") return ["public", "private"];
+  return ["private", "public"];
+}
+
+function isAccessRetryable(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("400") || message.includes("Bad Request") || message.includes("access");
 }
 
 function roundMoney(value) {
@@ -203,18 +214,30 @@ async function readBlobTransactions() {
     return readLocalTransactions();
   }
 
-  const result = await get(BLOB_PATH, { access: BLOB_ACCESS, token, useCache: false });
-  if (!result || result.statusCode !== 200 || !result.stream) {
-    return [];
+  let lastError;
+  for (const access of blobAccessOptions()) {
+    try {
+      const result = await get(BLOB_PATH, { access, token, useCache: false });
+      if (!result || result.statusCode !== 200 || !result.stream) {
+        return [];
+      }
+
+      const text = await streamToText(result.stream);
+      if (!text.trim()) {
+        return [];
+      }
+
+      const data = JSON.parse(text);
+      return Array.isArray(data.transactions) ? data.transactions : [];
+    } catch (error) {
+      lastError = error;
+      if (!isAccessRetryable(error)) {
+        throw error;
+      }
+    }
   }
 
-  const text = await streamToText(result.stream);
-  if (!text.trim()) {
-    return [];
-  }
-
-  const data = JSON.parse(text);
-  return Array.isArray(data.transactions) ? data.transactions : [];
+  throw lastError;
 }
 
 async function writeBlobTransactions(transactions) {
@@ -227,14 +250,27 @@ async function writeBlobTransactions(transactions) {
     return;
   }
 
-  await put(BLOB_PATH, JSON.stringify({ transactions }, null, 2), {
-    access: BLOB_ACCESS,
-    token,
-    contentType: "application/json; charset=utf-8",
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    cacheControlMaxAge: 60,
-  });
+  let lastError;
+  for (const access of blobAccessOptions()) {
+    try {
+      await put(BLOB_PATH, JSON.stringify({ transactions }, null, 2), {
+        access,
+        token,
+        contentType: "application/json; charset=utf-8",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        cacheControlMaxAge: 60,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isAccessRetryable(error)) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 async function listTransactions() {
@@ -277,6 +313,7 @@ async function ledgerPayload() {
     currentTotals: calculateCurrentTotals(transactions),
     database: blobToken() ? "vercel-blob" : "local-file",
     tokenSource: tokenSource(),
+    accessOptions: blobAccessOptions(),
     store: BLOB_STORE_NAME,
     path: BLOB_PATH,
   };
