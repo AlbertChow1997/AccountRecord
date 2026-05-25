@@ -34,10 +34,10 @@ function blobStoreId() {
     process.env.BLOB_STORE_ID ||
     "";
   const storeId = cleanEnv(configured);
-  if (storeId) return storeId;
+  if (storeId) return storeId.replace(/^store_/, "");
 
   const tokenStoreId = blobToken().split("_")[3] || "";
-  return tokenStoreId ? `store_${tokenStoreId}` : "";
+  return tokenStoreId;
 }
 
 function tokenSource() {
