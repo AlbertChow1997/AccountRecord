@@ -36,7 +36,6 @@ const EMPTY_TOTALS: Record<User, PersonTotal> = {
   A: { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 },
   C: { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 }
 };
-const PENDING_LEDGER_KEY = "account-record-pending-ledger";
 
 const currency = new Intl.NumberFormat("zh-CN", {
   style: "currency",
@@ -184,22 +183,10 @@ function App() {
   }
 
   useEffect(() => {
-    const pendingLedger = localStorage.getItem(PENDING_LEDGER_KEY);
-    if (pendingLedger) {
-      try {
-        applyLedgerData(JSON.parse(pendingLedger));
-        setIsLoading(false);
-        localStorage.removeItem(PENDING_LEDGER_KEY);
-        return;
-      } catch {
-        localStorage.removeItem(PENDING_LEDGER_KEY);
-      }
-    }
     refreshLedger();
   }, []);
 
-  function reloadAfterWrite(data: { transactions: Transaction[]; weeks: WeekSummary[]; currentTotals: Record<User, PersonTotal>; database: string }) {
-    localStorage.setItem(PENDING_LEDGER_KEY, JSON.stringify(data));
+  function reloadAfterWrite() {
     window.location.reload();
   }
 
@@ -246,11 +233,11 @@ function App() {
         date: `${date}T00:00:00.000Z`,
         createdAt: new Date().toISOString()
       };
-      const data = await requestLedger("/api/ledger", {
+      await requestLedger("/api/ledger", {
         method: "POST",
         body: JSON.stringify({ transaction })
       });
-      reloadAfterWrite(data);
+      reloadAfterWrite();
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存交易失败");
       setIsSaving(false);
@@ -261,8 +248,8 @@ function App() {
     setIsSaving(true);
     setError("");
     try {
-      const data = await requestLedger(`/api/ledger?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-      reloadAfterWrite(data);
+      await requestLedger(`/api/ledger?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      reloadAfterWrite();
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除交易失败");
       setIsSaving(false);
@@ -282,11 +269,11 @@ function App() {
         date: `${todayInputValue()}T00:00:00.000Z`,
         createdAt: now
       };
-      const data = await requestLedger("/api/ledger", {
+      await requestLedger("/api/ledger", {
         method: "POST",
         body: JSON.stringify({ transaction: settlement })
       });
-      reloadAfterWrite(data);
+      reloadAfterWrite();
     } catch (err) {
       setError(err instanceof Error ? err.message : "结算失败");
       setIsSaving(false);
