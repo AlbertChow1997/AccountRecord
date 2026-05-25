@@ -332,6 +332,7 @@ async function addTransaction(tx) {
   const transactions = existing.filter((item) => item.id !== normalized.id);
   transactions.unshift(normalized);
   await writeBlobTransactions(transactions);
+  return transactions;
 }
 
 async function deleteTransaction(id) {
@@ -340,10 +341,15 @@ async function deleteTransaction(id) {
 
   const transactions = (await listTransactions()).filter((item) => item.id !== txId);
   await writeBlobTransactions(transactions);
+  return transactions;
 }
 
 async function ledgerPayload() {
   const transactions = await listTransactions();
+  return buildLedgerPayload(transactions);
+}
+
+function buildLedgerPayload(transactions) {
   return {
     transactions,
     weeks: calculateWeekly(transactions),
@@ -391,14 +397,14 @@ export default async function handler(req, res) {
 
     if (req.method === "POST") {
       const payload = requestBody(req);
-      await addTransaction(payload.transaction || payload);
-      sendJson(res, 200, await ledgerPayload());
+      const transactions = await addTransaction(payload.transaction || payload);
+      sendJson(res, 200, buildLedgerPayload(transactions));
       return;
     }
 
     if (req.method === "DELETE") {
-      await deleteTransaction(req.query?.id);
-      sendJson(res, 200, await ledgerPayload());
+      const transactions = await deleteTransaction(req.query?.id);
+      sendJson(res, 200, buildLedgerPayload(transactions));
       return;
     }
 

@@ -36,6 +36,7 @@ const EMPTY_TOTALS: Record<User, PersonTotal> = {
   A: { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 },
   C: { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 }
 };
+const PENDING_LEDGER_KEY = "account-record-pending-ledger";
 
 const currency = new Intl.NumberFormat("zh-CN", {
   style: "currency",
@@ -156,16 +157,20 @@ function App() {
   const [error, setError] = useState("");
   const [showSettleConfirm, setShowSettleConfirm] = useState(false);
 
+  function applyLedgerData(data: { transactions: Transaction[]; weeks: WeekSummary[]; currentTotals: Record<User, PersonTotal>; database: string }) {
+    setTransactions(data.transactions);
+    setSummaries(data.weeks);
+    setCurrentTotals(data.currentTotals);
+    setDatabase(data.database);
+  }
+
   async function refreshLedger(options?: { silent?: boolean }) {
     if (!options?.silent) {
       setIsLoading(true);
     }
     try {
       const data = await requestLedger();
-      setTransactions(data.transactions);
-      setSummaries(data.weeks);
-      setCurrentTotals(data.currentTotals);
-      setDatabase(data.database);
+      applyLedgerData(data);
       setError("");
     } catch (err) {
       if (!options?.silent) {
@@ -179,17 +184,33 @@ function App() {
   }
 
   useEffect(() => {
-    refreshLedger();
+    const pendingLedger = sessionStorage.getItem(PENDING_LEDGER_KEY);
+    let initialSyncDelay = 0;
+    if (pendingLedger) {
+      try {
+        applyLedgerData(JSON.parse(pendingLedger));
+        initialSyncDelay = 1500;
+      } catch {
+        sessionStorage.removeItem(PENDING_LEDGER_KEY);
+      }
+    }
+    const initialTimer = window.setTimeout(() => {
+      refreshLedger().then(() => sessionStorage.removeItem(PENDING_LEDGER_KEY));
+    }, initialSyncDelay);
     const timer = window.setInterval(() => {
       if (!document.hidden && !isSaving) {
         refreshLedger({ silent: true });
       }
     }, 8000);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
   }, [isSaving]);
 
-  function reloadAfterWrite() {
+  function reloadAfterWrite(data: { transactions: Transaction[]; weeks: WeekSummary[]; currentTotals: Record<User, PersonTotal>; database: string }) {
+    sessionStorage.setItem(PENDING_LEDGER_KEY, JSON.stringify(data));
     window.location.reload();
   }
 
@@ -236,11 +257,11 @@ function App() {
         date: `${date}T00:00:00.000Z`,
         createdAt: new Date().toISOString()
       };
-      await requestLedger("/api/ledger", {
+      const data = await requestLedger("/api/ledger", {
         method: "POST",
         body: JSON.stringify({ transaction })
       });
-      reloadAfterWrite();
+      reloadAfterWrite(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存交易失败");
       setIsSaving(false);
@@ -251,8 +272,8 @@ function App() {
     setIsSaving(true);
     setError("");
     try {
-      await requestLedger(`/api/ledger?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-      reloadAfterWrite();
+      const data = await requestLedger(`/api/ledger?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      reloadAfterWrite(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除交易失败");
       setIsSaving(false);
@@ -272,11 +293,11 @@ function App() {
         date: `${todayInputValue()}T00:00:00.000Z`,
         createdAt: now
       };
-      await requestLedger("/api/ledger", {
+      const data = await requestLedger("/api/ledger", {
         method: "POST",
         body: JSON.stringify({ transaction: settlement })
       });
-      reloadAfterWrite();
+      reloadAfterWrite(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "结算失败");
       setIsSaving(false);
