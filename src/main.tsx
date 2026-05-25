@@ -37,6 +37,7 @@ const EMPTY_TOTALS: Record<User, PersonTotal> = {
   C: { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 }
 };
 const PENDING_LEDGER_KEY = "account-record-pending-ledger";
+const PENDING_LEDGER_TTL_MS = 6000;
 
 const currency = new Intl.NumberFormat("zh-CN", {
   style: "currency",
@@ -184,21 +185,30 @@ function App() {
   }
 
   useEffect(() => {
-    const pendingLedger = sessionStorage.getItem(PENDING_LEDGER_KEY);
-    let initialSyncDelay = 0;
+    const pendingLedger = localStorage.getItem(PENDING_LEDGER_KEY);
+    let skipSyncUntil = 0;
     if (pendingLedger) {
       try {
-        applyLedgerData(JSON.parse(pendingLedger));
-        initialSyncDelay = 1500;
+        const parsed = JSON.parse(pendingLedger) as {
+          expiresAt: number;
+          data: { transactions: Transaction[]; weeks: WeekSummary[]; currentTotals: Record<User, PersonTotal>; database: string };
+        };
+        if (parsed.expiresAt > Date.now()) {
+          applyLedgerData(parsed.data);
+          setIsLoading(false);
+          skipSyncUntil = parsed.expiresAt;
+        } else {
+          localStorage.removeItem(PENDING_LEDGER_KEY);
+        }
       } catch {
-        sessionStorage.removeItem(PENDING_LEDGER_KEY);
+        localStorage.removeItem(PENDING_LEDGER_KEY);
       }
     }
     const initialTimer = window.setTimeout(() => {
-      refreshLedger().then(() => sessionStorage.removeItem(PENDING_LEDGER_KEY));
-    }, initialSyncDelay);
+      refreshLedger().then(() => localStorage.removeItem(PENDING_LEDGER_KEY));
+    }, Math.max(0, skipSyncUntil - Date.now()));
     const timer = window.setInterval(() => {
-      if (!document.hidden && !isSaving) {
+      if (!document.hidden && !isSaving && Date.now() >= skipSyncUntil) {
         refreshLedger({ silent: true });
       }
     }, 8000);
@@ -210,7 +220,7 @@ function App() {
   }, [isSaving]);
 
   function reloadAfterWrite(data: { transactions: Transaction[]; weeks: WeekSummary[]; currentTotals: Record<User, PersonTotal>; database: string }) {
-    sessionStorage.setItem(PENDING_LEDGER_KEY, JSON.stringify(data));
+    localStorage.setItem(PENDING_LEDGER_KEY, JSON.stringify({ expiresAt: Date.now() + PENDING_LEDGER_TTL_MS, data }));
     window.location.reload();
   }
 
