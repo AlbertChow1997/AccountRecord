@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const USERS = ["T", "A", "C"];
-const SPLITS = ["all", "ta"];
+const SPLITS = ["all", "tc", "ta"];
 const RECORD_TYPES = ["transaction", "settlement"];
 const BLOB_STORE_NAME = "AccountRecords";
 const BLOB_PATH = "transactions.json";
@@ -121,14 +121,14 @@ function normalizeTransaction(tx) {
   }
 
   if (!USERS.includes(payer)) throw new Error("付款人只能是 T、A 或 C");
-  if (!SPLITS.includes(split)) throw new Error("分摊方式只能是 all 或 ta");
+  if (!SPLITS.includes(split)) throw new Error("分摊方式只能是 all、tc 或 ta");
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("金额必须大于 0");
 
   return { id, type, amount, payer, split, note, date, createdAt };
 }
 
 function applyTransactionToTotals(totals, normalized) {
-  const participants = normalized.split === "all" ? USERS : ["T", "A"];
+  const participants = normalized.split === "all" ? USERS : normalized.split === "ta" ? ["T", "A"] : ["T", "C"];
   const cents = toCents(normalized.amount);
   const baseShare = Math.floor(cents / participants.length);
   const remainder = cents % participants.length;

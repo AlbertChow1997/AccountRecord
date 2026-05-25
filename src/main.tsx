@@ -4,7 +4,7 @@ import { CalendarDays, Check, CircleDollarSign, ReceiptText, RotateCcw, Trash2, 
 import "./styles.css";
 
 type User = "T" | "A" | "C";
-type SplitMode = "all" | "ta";
+type SplitMode = "all" | "tc" | "ta";
 
 type Transaction = {
   id: string;
@@ -90,7 +90,7 @@ function calculateWeeklySummaries(transactions: Transaction[]): WeekSummary[] {
 
     const week = getWeekStart(tx.date);
     const totals = weeks.get(week) ?? emptyTotals();
-    const participants = tx.split === "all" ? USERS : (["T", "A"] as User[]);
+    const participants = tx.split === "all" ? USERS : tx.split === "ta" ? (["T", "A"] as User[]) : (["T", "C"] as User[]);
     const cents = Math.round(tx.amount * 100);
     const baseShare = Math.floor(cents / participants.length);
     const remainder = cents % participants.length;
@@ -242,6 +242,7 @@ function App() {
       setDatabase(data.database);
       setAmount("");
       setNote("");
+      await refreshLedger({ silent: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存交易失败");
     } finally {
@@ -258,6 +259,7 @@ function App() {
       setSummaries(data.weeks);
       setCurrentTotals(data.currentTotals);
       setDatabase(data.database);
+      await refreshLedger({ silent: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除交易失败");
     } finally {
@@ -287,6 +289,7 @@ function App() {
       setCurrentTotals(data.currentTotals);
       setDatabase(data.database);
       setShowSettleConfirm(false);
+      await refreshLedger({ silent: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "结算失败");
     } finally {
@@ -356,9 +359,9 @@ function App() {
                 <Users size={18} />
                 三人均分
               </button>
-              <button type="button" className={split === "ta" ? "selected" : ""} onClick={() => setSplit("ta")}>
+              <button type="button" className={split === "tc" ? "selected" : ""} onClick={() => setSplit("tc")}>
                 <Users size={18} />
-                T 与 A 均分
+                T 与 C 均分
               </button>
             </div>
           </div>
@@ -430,7 +433,7 @@ function App() {
                       <span>{dateOnly(tx.date)}</span>
                       <strong>{currency.format(tx.amount)}</strong>
                       <small>
-                        {tx.payer} 付款 · {tx.split === "all" ? "三人均分" : "T 与 A 均分"} · {tx.note || "无备注"}
+                        {tx.payer} 付款 · {tx.split === "all" ? "三人均分" : tx.split === "ta" ? "T 与 A 均分" : "T 与 C 均分"} · {tx.note || "无备注"}
                       </small>
                     </div>
                   ))}
@@ -461,7 +464,7 @@ function App() {
                       <strong>{currency.format(tx.amount)}</strong>
                       <span>{tx.note || "无备注"}</span>
                       <small>
-                        {tx.payer} 付款 · {tx.split === "all" ? "三人均分" : "T 与 A 均分"} · {dateOnly(tx.date)}
+                        {tx.payer} 付款 · {tx.split === "all" ? "三人均分" : tx.split === "ta" ? "T 与 A 均分" : "T 与 C 均分"} · {dateOnly(tx.date)}
                       </small>
                     </>
                   )}
