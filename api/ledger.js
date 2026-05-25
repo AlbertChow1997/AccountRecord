@@ -20,7 +20,12 @@ function blobToken() {
     process.env.VERCEL_BLOB_READ_WRITE_TOKEN ||
     "";
 
-  return String(rawToken).trim().replace(/^["']|["']$/g, "");
+  return String(rawToken).trim().replace(/^["']|["']$/g, "").replace(/\s+/g, "");
+}
+
+function blobStoreId() {
+  const token = blobToken();
+  return token.split("_")[3] || "";
 }
 
 function tokenSource() {
@@ -44,6 +49,9 @@ function assertValidBlobToken() {
   const token = blobToken();
   if (!token.startsWith("vercel_blob_rw_")) {
     throw new Error(`Vercel Blob token 格式不正确：${tokenSource() || "未找到"} 必须是 vercel_blob_rw_ 开头的 Read/Write Token`);
+  }
+  if (!blobStoreId()) {
+    throw new Error(`Vercel Blob token 无法解析 Store ID：${tokenSource() || "未找到"}`);
   }
 }
 
@@ -226,7 +234,7 @@ async function readBlobTransactions() {
   let lastError;
   for (const access of blobAccessOptions()) {
     try {
-      const result = await get(BLOB_PATH, { access, token, useCache: false });
+      const result = await get(BLOB_PATH, { access, token, storeId: blobStoreId(), useCache: false });
       if (!result || result.statusCode !== 200 || !result.stream) {
         return [];
       }
@@ -268,6 +276,7 @@ async function writeBlobTransactions(transactions) {
       await put(BLOB_PATH, JSON.stringify({ transactions }, null, 2), {
         access,
         token,
+        storeId: blobStoreId(),
         contentType: "application/json; charset=utf-8",
         addRandomSuffix: false,
         allowOverwrite: true,
@@ -337,6 +346,7 @@ async function ledgerPayload() {
     currentTotals: calculateCurrentTotals(transactions),
     database: blobToken() ? "vercel-blob" : "local-file",
     tokenSource: tokenSource(),
+    storeId: blobStoreId(),
     accessOptions: blobAccessOptions(),
     store: BLOB_STORE_NAME,
     path: BLOB_PATH,
