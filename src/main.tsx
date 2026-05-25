@@ -186,8 +186,10 @@ function App() {
     refreshLedger();
   }, []);
 
-  function reloadAfterWrite() {
-    window.location.reload();
+  function applyAfterWrite(data: { transactions: Transaction[]; weeks: WeekSummary[]; currentTotals: Record<User, PersonTotal>; database: string }) {
+    applyLedgerData(data);
+    setError("");
+    setIsSaving(false);
   }
 
   const transactionsByWeek = useMemo(() => {
@@ -233,11 +235,13 @@ function App() {
         date: `${date}T00:00:00.000Z`,
         createdAt: new Date().toISOString()
       };
-      await requestLedger("/api/ledger", {
+      const data = await requestLedger("/api/ledger", {
         method: "POST",
         body: JSON.stringify({ transaction })
       });
-      reloadAfterWrite();
+      setAmount("");
+      setNote("");
+      applyAfterWrite(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存交易失败");
       setIsSaving(false);
@@ -248,8 +252,8 @@ function App() {
     setIsSaving(true);
     setError("");
     try {
-      await requestLedger(`/api/ledger?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-      reloadAfterWrite();
+      const data = await requestLedger(`/api/ledger?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      applyAfterWrite(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除交易失败");
       setIsSaving(false);
@@ -269,11 +273,12 @@ function App() {
         date: `${todayInputValue()}T00:00:00.000Z`,
         createdAt: now
       };
-      await requestLedger("/api/ledger", {
+      const data = await requestLedger("/api/ledger", {
         method: "POST",
         body: JSON.stringify({ transaction: settlement })
       });
-      reloadAfterWrite();
+      setShowSettleConfirm(false);
+      applyAfterWrite(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "结算失败");
       setIsSaving(false);
