@@ -11,15 +11,16 @@ const BLOB_PATH = "transactions.json";
 const LOCAL_STORE = join(tmpdir(), "account-record-transactions.json");
 
 function blobToken() {
-  return (
+  const rawToken =
     process.env.ACCOUNTRECORDS_READ_WRITE_TOKEN ||
     process.env.ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN ||
     process.env.ACCOUNT_RECORDS_READ_WRITE_TOKEN ||
     process.env.ACCOUNT_RECORDS_BLOB_READ_WRITE_TOKEN ||
     process.env.BLOB_READ_WRITE_TOKEN ||
     process.env.VERCEL_BLOB_READ_WRITE_TOKEN ||
-    ""
-  );
+    "";
+
+  return String(rawToken).trim().replace(/^["']|["']$/g, "");
 }
 
 function tokenSource() {
@@ -37,6 +38,13 @@ function blobAccessOptions() {
   if (configured === "private") return ["private", "public"];
   if (configured === "public") return ["public", "private"];
   return ["private", "public"];
+}
+
+function assertValidBlobToken() {
+  const token = blobToken();
+  if (!token.startsWith("vercel_blob_rw_")) {
+    throw new Error(`Vercel Blob token 格式不正确：${tokenSource() || "未找到"} 必须是 vercel_blob_rw_ 开头的 Read/Write Token`);
+  }
 }
 
 function isAccessRetryable(error) {
@@ -213,6 +221,7 @@ async function readBlobTransactions() {
     }
     return readLocalTransactions();
   }
+  assertValidBlobToken();
 
   let lastError;
   for (const access of blobAccessOptions()) {
@@ -251,6 +260,7 @@ async function writeBlobTransactions(transactions) {
     await writeLocalTransactions(transactions);
     return;
   }
+  assertValidBlobToken();
 
   let lastError;
   for (const access of blobAccessOptions()) {
@@ -296,7 +306,17 @@ async function listTransactions() {
 
 async function addTransaction(tx) {
   const normalized = normalizeTransaction(tx);
-  const transactions = (await listTransactions()).filter((item) => item.id !== normalized.id);
+  let existing = [];
+  try {
+    existing = await listTransactions();
+  } catch (error) {
+    if (blobToken()) {
+      existing = [];
+    } else {
+      throw error;
+    }
+  }
+  const transactions = existing.filter((item) => item.id !== normalized.id);
   transactions.unshift(normalized);
   await writeBlobTransactions(transactions);
 }
