@@ -69,6 +69,63 @@ function formatWeek(start: string) {
   return `${start} 至 ${end.toISOString().slice(0, 10)}`;
 }
 
+function emptyTotals(): Record<User, PersonTotal> {
+  return {
+    T: { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 },
+    A: { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 },
+    C: { paid: 0, share: 0, payable: 0, receivable: 0, net: 0 }
+  };
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function calculateWeeklySummaries(transactions: Transaction[]): WeekSummary[] {
+  const weeks = new Map<string, Record<User, PersonTotal>>();
+
+  for (const tx of transactions) {
+    if (tx.type === "settlement") continue;
+    if (!tx.payer || !tx.split || !Number.isFinite(tx.amount) || tx.amount <= 0) continue;
+
+    const week = getWeekStart(tx.date);
+    const totals = weeks.get(week) ?? emptyTotals();
+    const participants = tx.split === "all" ? USERS : (["T", "A"] as User[]);
+    const cents = Math.round(tx.amount * 100);
+    const baseShare = Math.floor(cents / participants.length);
+    const remainder = cents % participants.length;
+
+    totals[tx.payer].paid += cents;
+    participants.forEach((user, index) => {
+      totals[user].share += baseShare + (index < remainder ? 1 : 0);
+    });
+    weeks.set(week, totals);
+  }
+
+  return [...weeks.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([weekStart, rawTotals]) => ({
+      weekStart,
+      totals: Object.fromEntries(
+        USERS.map((user) => {
+          const paid = rawTotals[user].paid;
+          const share = rawTotals[user].share;
+          const net = share - paid;
+          return [
+            user,
+            {
+              paid: roundMoney(paid / 100),
+              share: roundMoney(share / 100),
+              payable: roundMoney(Math.max(net, 0) / 100),
+              receivable: roundMoney(Math.max(-net, 0) / 100),
+              net: roundMoney(net / 100)
+            }
+          ];
+        })
+      ) as Record<User, PersonTotal>
+    }));
+}
+
 async function requestLedger(path = "/api/ledger", options?: RequestInit) {
   const response = await fetch(path, {
     ...options,
@@ -147,6 +204,7 @@ function App() {
     }
     return groups;
   }, [transactions]);
+  const historySummaries = useMemo(() => calculateWeeklySummaries(transactions), [transactions]);
   const recentTransactions = useMemo(
     () =>
       [...transactions]
@@ -347,11 +405,11 @@ function App() {
         <section>
           <div className="section-heading">
             <h2>每周历史</h2>
-            <span>{summaries.length} 周</span>
+            <span>{historySummaries.length} 周</span>
           </div>
           <div className="week-list">
-            {summaries.length === 0 && <div className="empty-state">还没有交易记录</div>}
-            {summaries.map((week) => (
+            {historySummaries.length === 0 && <div className="empty-state">还没有交易记录</div>}
+            {historySummaries.map((week) => (
               <article className="week-card" key={week.weekStart}>
                 <header>
                   <strong>{formatWeek(week.weekStart)}</strong>

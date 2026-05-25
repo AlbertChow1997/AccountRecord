@@ -328,16 +328,7 @@ async function listTransactions() {
 
 async function addTransaction(tx) {
   const normalized = normalizeTransaction(tx);
-  let existing = [];
-  try {
-    existing = await listTransactions();
-  } catch (error) {
-    if (blobToken()) {
-      existing = [];
-    } else {
-      throw error;
-    }
-  }
+  const existing = await listTransactions();
   const transactions = existing.filter((item) => item.id !== normalized.id);
   transactions.unshift(normalized);
   await writeBlobTransactions(transactions);
