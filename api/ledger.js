@@ -7,27 +7,27 @@ const USERS = ["T", "A", "C"];
 const SPLITS = ["all", "ta"];
 const RECORD_TYPES = ["transaction", "settlement"];
 const BLOB_STORE_NAME = "AccountRecords";
-const BLOB_PATH = `${BLOB_STORE_NAME}/transactions.json`;
+const BLOB_PATH = "transactions.json";
 const LOCAL_STORE = join(tmpdir(), "account-record-transactions.json");
 
 function blobToken() {
   return (
-    process.env.BLOB_READ_WRITE_TOKEN ||
     process.env.ACCOUNTRECORDS_READ_WRITE_TOKEN ||
     process.env.ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN ||
     process.env.ACCOUNT_RECORDS_READ_WRITE_TOKEN ||
     process.env.ACCOUNT_RECORDS_BLOB_READ_WRITE_TOKEN ||
+    process.env.BLOB_READ_WRITE_TOKEN ||
     process.env.VERCEL_BLOB_READ_WRITE_TOKEN ||
     ""
   );
 }
 
 function tokenSource() {
-  if (process.env.BLOB_READ_WRITE_TOKEN) return "BLOB_READ_WRITE_TOKEN";
   if (process.env.ACCOUNTRECORDS_READ_WRITE_TOKEN) return "ACCOUNTRECORDS_READ_WRITE_TOKEN";
   if (process.env.ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN) return "ACCOUNTRECORDS_BLOB_READ_WRITE_TOKEN";
   if (process.env.ACCOUNT_RECORDS_READ_WRITE_TOKEN) return "ACCOUNT_RECORDS_READ_WRITE_TOKEN";
   if (process.env.ACCOUNT_RECORDS_BLOB_READ_WRITE_TOKEN) return "ACCOUNT_RECORDS_BLOB_READ_WRITE_TOKEN";
+  if (process.env.BLOB_READ_WRITE_TOKEN) return "BLOB_READ_WRITE_TOKEN";
   if (process.env.VERCEL_BLOB_READ_WRITE_TOKEN) return "VERCEL_BLOB_READ_WRITE_TOKEN";
   return "";
 }
@@ -237,7 +237,9 @@ async function readBlobTransactions() {
     }
   }
 
-  throw lastError;
+  throw new Error(
+    `Vercel Blob 读取失败：${lastError instanceof Error ? lastError.message : String(lastError)}。token=${tokenSource() || "未找到"}，path=${BLOB_PATH}，access=${blobAccessOptions().join("/")}`
+  );
 }
 
 async function writeBlobTransactions(transactions) {
@@ -270,7 +272,9 @@ async function writeBlobTransactions(transactions) {
     }
   }
 
-  throw lastError;
+  throw new Error(
+    `Vercel Blob 写入失败：${lastError instanceof Error ? lastError.message : String(lastError)}。token=${tokenSource() || "未找到"}，path=${BLOB_PATH}，access=${blobAccessOptions().join("/")}`
+  );
 }
 
 async function listTransactions() {
