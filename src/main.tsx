@@ -39,7 +39,7 @@ const EMPTY_TOTALS: Record<User, PersonTotal> = {
 
 const currency = new Intl.NumberFormat("zh-CN", {
   style: "currency",
-  currency: "CNY",
+  currency: "EUR",
   minimumFractionDigits: 2
 });
 
